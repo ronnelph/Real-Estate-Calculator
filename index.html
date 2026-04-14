@@ -495,6 +495,7 @@ body{background:#fff;font-size:11px}
         <div class="metric"><div class="m-label">Total Appreciation</div><div class="m-value" id="r-totalAppreciation">—</div><div class="m-sub" id="r-totalAppreciationSub">—</div><div class="m-help">Value increase from TCP to exit (pre + post-turnover).</div></div>
         <div class="metric metric-purple"><div class="m-label">Break-Even Exit Price</div><div class="m-value" id="r-breakeven">—</div><div class="m-sub" id="r-breakevenSub">—</div><div class="m-help">The minimum sale price to recover all costs after rental income.</div></div>
         <div class="metric"><div class="m-label">Net Profit</div><div class="m-value" id="r-netProfit2">—</div><div class="m-sub">Sale + rental − all costs</div><div class="m-help">Bottom line: what you walk away with.</div></div>
+        <div class="metric metric-purple" id="equity-roi-metric" style="display:none"><div class="m-label">Return on Own Equity</div><div class="m-value" id="r-equityROI">—</div><div class="m-sub">Excl. loan principal repaid</div><div class="m-help">Net profit ÷ your true out-of-pocket cash (DP + any monthly top-ups). Shows the real leverage advantage.</div></div>
       </div>
     </div>
 
@@ -508,7 +509,7 @@ body{background:#fff;font-size:11px}
         <div class="cf-warning-grid">
           <div class="cf-warning-item"><div class="cw-label">Monthly Shortfall</div><div class="cw-value" id="cw-monthly">—</div><div class="cw-sub">Cash you cover each month</div></div>
           <div class="cf-warning-item"><div class="cw-label">Annual Shortfall</div><div class="cw-value" id="cw-annual">—</div><div class="cw-sub">Cash out per year</div></div>
-          <div class="cf-warning-item"><div class="cw-label">Total Funding Required</div><div class="cw-value" id="cw-total">—</div><div class="cw-sub">Over full loan term</div></div>
+          <div class="cf-warning-item"><div class="cw-label">Total Funding Required</div><div class="cw-value" id="cw-total">—</div><div class="cw-sub">Holding period vs. full loan term</div></div>
         </div>
         <p style="font-size:10.5px;color:var(--red-text);line-height:1.65;opacity:.85"><strong>What this means:</strong> Not a deal-breaker — it's a capital requirement. The property still builds equity. But you must have reliable income to cover this gap every month. If unsustainable, consider a higher DP, shorter loan term, or higher-yield unit.</p>
       </div>
@@ -1114,7 +1115,8 @@ function calculate(){
   }
 
   const eD=yrs[hz],xV=eD.pV,xSG=xV*(1-sCost),xSN=xSG-rLB,tI=eD.cI,tRn=eD.cRn;
-  const nP2=xSN+tRn-tI,tROI=tI>0?(nP2/tI)*100:0;
+  // NOTE: renamed nP2 → netProfitAmt to avoid collision with nP (loan months) in calcR
+  const netProfitAmt=xSN+tRn-tI,tROI=tI>0?(netProfitAmt/tI)*100:0;
   const aROI=tI>0?(Math.pow(Math.max((xSN+tRn)/tI,0.001),1/hz)-1)*100:0;
   const tApp=((xV-tcp)/tcp)*100;
 
@@ -1123,12 +1125,20 @@ function calculate(){
   const breakEvenPrice=beNeeded>0?beNeeded/(1-sCost):0;
   const breakEvenPct=tcp>0?((breakEvenPrice/tcp)-1)*100:0;
 
-  calcR={yrs,xV,xSG,xSN,tI,tRn,nP:nP2,tROI,aROI,gY,nY,tApp,tcp,cYrs,hz,
+  // Equity-only ROI (return on own out-of-pocket cash, excl. loan principal repaid by rent)
+  const renYrsFin=Math.max(hz-cYrs,0);
+  const holdMonthsFin=Math.min(renYrsFin*12,nP);
+  const shortfallPerMo=(!isCash&&mCF<0)?Math.abs(mCF):0;
+  const ownEquityCash=tP1+shortfallPerMo*holdMonthsFin;
+  const equityOnlyROI=ownEquityCash>0?(netProfitAmt/ownEquityCash)*100:null;
+
+  calcR={yrs,xV,xSG,xSN,tI,tRn,netProfitAmt,tROI,aROI,gY,nY,tApp,tcp,cYrs,hz,
     bF,bRt,bAn,eF,eRt,eAn,res,mDP,dpMo,tP1,vTO,bIE,bal,mA,mNR,mCF,area,rLB,isCash,
     bRateGross,bTaxRate,bRate,eRateGross,eExitCost,altDep,sCost,bYrs,iRate,rm,nP,
     dscr,annualNOI,annualDS,breakEvenPrice,breakEvenPct,beNeeded,
     repriceEnabled,repriceAtYr,repriceNewRate,newMA,balAtRepricing,
-    rent,occ,mExp,rentalTaxPct,rEsc,mGrossRent,mRentTax,getPV,preAppr,postAppr};
+    rent,occ,mExp,rentalTaxPct,rEsc,mGrossRent,mRentTax,getPV,preAppr,postAppr,
+    equityOnlyROI,ownEquityCash,shortfallPerMo,holdMonthsFin};
 
   renderR();
   switchTab('analysis');
@@ -1153,8 +1163,17 @@ function renderR(){
   $('r-exitValueSub').textContent='Year '+r.hz;
   $('r-totalAppreciation').textContent=pct(r.tApp);
   $('r-totalAppreciationSub').textContent=fmtM(r.xV-r.tcp)+' gain';
-  $('r-netProfit2').textContent=fmtM(r.nP);
-  $('r-netProfit').textContent=fmtM(r.nP);
+  $('r-netProfit2').textContent=fmtM(r.netProfitAmt);
+  $('r-netProfit').textContent=fmtM(r.netProfitAmt);
+
+  // EQUITY-ONLY ROI (only meaningful for financed + negative CF scenarios)
+  if(!r.isCash&&r.equityOnlyROI!==null&&Math.abs(r.equityOnlyROI-r.tROI)>1){
+    $('equity-roi-metric').style.display='block';
+    $('r-equityROI').textContent=pct(r.equityOnlyROI);
+    $('r-equityROI').style.color=r.equityOnlyROI>=r.eAn?'var(--purple-text)':'var(--text-muted)';
+  }else{
+    $('equity-roi-metric').style.display='none';
+  }
 
   // BREAK-EVEN
   if(r.beNeeded>0){
@@ -1174,9 +1193,10 @@ function renderR(){
   if(r.mCF<0&&!r.isCash){
     $('cf-warning-card').style.display='block';$('cf-ok-card').style.display='none';
     const s=Math.abs(r.mCF);
+    const holdMos=r.holdMonthsFin||Math.min(Math.max(r.hz-r.cYrs,0)*12,r.nP);
     $('cw-monthly').textContent=fmt(Math.round(s));
     $('cw-annual').textContent=fmtM(s*12);
-    $('cw-total').textContent=fmtM(s*12*loanDurYrs);
+    $('cw-total').textContent=fmtM(s*holdMos)+' (your '+Math.round(holdMos/12)+'yr hold) / '+fmtM(s*12*loanDurYrs)+' (full '+loanDurYrs+'yr loan)';
   }else if(r.mCF>0){
     $('cf-warning-card').style.display='none';$('cf-ok-card').style.display='block';
     $('co-monthly').textContent=fmt(Math.round(r.mCF));
@@ -1264,11 +1284,14 @@ function renderR(){
   $('sum-psqm').textContent=fmt(Math.round(r.tcp/r.area));
   $('sum-roi').textContent=pct(r.tROI);$('sum-cagr').textContent=pct(r.aROI);
   $('sum-yield').textContent=pct(r.nY);$('sum-exitval').textContent=fmtM(r.xV);
-  $('sum-appr').textContent=pct(r.tApp);$('sum-profit').textContent=fmtM(r.nP);
+  $('sum-appr').textContent=pct(r.tApp);$('sum-profit').textContent=fmtM(r.netProfitAmt);
   $('sum-breakeven').textContent=r.beNeeded>0?fmtM(r.breakEvenPrice):'Already covered';
-  if(r.dscr!==null){
+  if(r.dscr!==null&&!r.isCash){
     $('sum-dscr').textContent=r.dscr.toFixed(2)+'x';
     $('sum-dscr').style.color=r.dscr>=1.25?'var(--green-text)':r.dscr>=1?'var(--orange-text)':'var(--red-text)';
+  }else{
+    $('sum-dscr').textContent='N/A';
+    $('sum-dscr').style.color='var(--text-dim)';
   }
   $('sum-c-prop').textContent=pct(r.tROI);$('sum-c-prop-ann').textContent=pct(r.aROI);
   $('sum-c-bank').textContent=pct(r.bRt);$('sum-c-bank-ann').textContent=pct(r.bAn);
@@ -1410,6 +1433,14 @@ function updateRentSensitivity(){
 // ═══════════════════════════════════════════
 function renderLeverageTable(){
   const r=calcR;if(!r)return;
+  const tbody=$('leverage-tbody');
+  if(r.isCash){
+    tbody.innerHTML=`<tr><td colspan="7" style="text-align:center;padding:18px;font-family:'DM Sans';color:var(--text-dim);font-size:12px">
+      <strong style="color:var(--purple-text)">Leverage not applicable — cash purchase.</strong><br>
+      <span style="font-size:10.5px">Your actual cash ROI is <strong>${pct(r.tROI)}</strong> regardless of DP% because there is no loan. Set Loan Term &gt; 0 to model leverage scenarios.</span>
+    </td></tr>`;
+    return;
+  }
   const dpScenarios=[10,15,20,25,30,40];
   const userDP=v('dpPercent');
   let html='';
@@ -1566,11 +1597,11 @@ function shareWhatsApp(){
     `📅 Monthly DP: ${fmt(Math.round(r.mDP))}/mo × ${r.dpMo} months\n`+
     `🏠 Turnover Value: ${fmtM(r.vTO)}\n`+
     `📈 Exit Value (Yr ${r.hz}): ${fmtM(r.xV)}\n`+
-    `💵 Net Profit: ${fmtM(r.nP)}\n`+
+    `💵 Net Profit: ${fmtM(r.netProfitAmt)}\n`+
     `📊 Total ROI: ${pct(r.tROI)}\n`+
     `⚡ Annual Return: ${pct(r.aROI)}\n`+
     `🏠 Net Rental Yield: ${pct(r.nY)}\n`+
-    `📐 DSCR: ${r.dscr!==null?r.dscr.toFixed(2)+'×':'Cash purchase'}\n\n`+
+    `📐 DSCR: ${(!r.isCash&&r.dscr!==null)?r.dscr.toFixed(2)+'×':'N/A (cash purchase)'}\n\n`+
     `vs. Bank TD (${pct(r.bRateGross*100)} gross): ${pct(r.bAn)}/yr\n`+
     `vs. Equities/REITs (${pct(r.eRateGross*100)} gross): ${pct(r.eAn)}/yr\n\n`+
     `🔗 Full analysis prepared by:\n`+
